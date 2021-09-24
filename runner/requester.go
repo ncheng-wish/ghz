@@ -2,29 +2,30 @@ package runner
 
 import (
 	"context"
-	"fmt"
-	"math"
+	//"fmt"
+	//"math"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/bojand/ghz/load"
-	"github.com/bojand/ghz/protodesc"
+	//"github.com/bojand/ghz/protodesc"
 	"github.com/jhump/protoreflect/desc"
-	"github.com/jhump/protoreflect/dynamic"
+	//"github.com/jhump/protoreflect/dynamic"
 	"github.com/jhump/protoreflect/dynamic/grpcdynamic"
-	"github.com/jhump/protoreflect/grpcreflect"
+	//"github.com/jhump/protoreflect/grpcreflect"
 
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/keepalive"
-	"google.golang.org/grpc/metadata"
+	//"google.golang.org/grpc/keepalive"
+	//"google.golang.org/grpc/metadata"
 
-	reflectpb "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
+	//reflectpb "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
 
 	// To register the xds resolvers and balancers.
 	_ "google.golang.org/grpc/xds"
+	"github.com/ContextLogic/authn/pkg/authn"
 )
 
 // Max size of the buffer of result channel.
@@ -40,7 +41,8 @@ type callResult struct {
 
 // Requester is used for doing the requests
 type Requester struct {
-	conns    []*grpc.ClientConn
+	//conns    []*grpc.ClientConn
+	reqs     []*authn.TokenRequester
 	stubs    []grpcdynamic.Stub
 	handlers []*statsHandler
 
@@ -65,7 +67,7 @@ type Requester struct {
 func NewRequester(c *RunConfig) (*Requester, error) {
 
 	var err error
-	var mtd *desc.MethodDescriptor
+	//var mtd *desc.MethodDescriptor
 
 	reqr := &Requester{
 		config:     c,
@@ -73,10 +75,11 @@ func NewRequester(c *RunConfig) (*Requester, error) {
 		results:    make(chan *callResult, min(c.c*1000, maxResult)),
 		stopCh:     make(chan bool, 1),
 		workers:    make([]*Worker, 0, c.c),
-		conns:      make([]*grpc.ClientConn, 0, c.nConns),
-		stubs:      make([]grpcdynamic.Stub, 0, c.nConns),
+		//conns:      make([]*grpc.ClientConn, 0, c.nConns),
+		reqs:       make([]*authn.TokenRequester, 0, c.nConns),
+		//stubs:      make([]grpcdynamic.Stub, 0, c.nConns),
 	}
-
+/*
 	if c.proto != "" {
 		mtd, err = protodesc.GetMethodDescFromProto(c.call, c.proto, c.importPaths)
 	} else if c.protoset != "" {
@@ -85,22 +88,27 @@ func NewRequester(c *RunConfig) (*Requester, error) {
 		mtd, err = protodesc.GetMethodDescFromProtoSetBinary(c.call, c.protosetBinary)
 	} else {
 		// use reflection to get method descriptor
-		var cc *grpc.ClientConn
+		//var cc *grpc.ClientConn
 		// temporary connection for reflection, do not store as requester connections
-		cc, err = reqr.newClientConn(false)
+		req, err := reqr.newClientConn(false)
 		if err != nil {
 			return nil, err
 		}
 
+ */
+/*
 		defer func() {
 			// purposefully ignoring error as we do not care if there
 			// is an error on close
 			_ = cc.Close()
 		}()
 
+ */
+
 		// cancel is ignored here as connection.Close() is used.
 		// See https://godoc.org/google.golang.org/grpc#DialContext
-		ctx, _ := context.WithTimeout(context.Background(), c.dialTimeout)
+
+		/*ctx, _ := context.WithTimeout(context.Background(), c.dialTimeout)
 
 		md := make(metadata.MD)
 		if c.rmd != nil && len(c.rmd) > 0 {
@@ -112,12 +120,16 @@ func NewRequester(c *RunConfig) (*Requester, error) {
 		refClient := grpcreflect.NewClient(refCtx, reflectpb.NewServerReflectionClient(cc))
 
 		mtd, err = protodesc.GetMethodDescFromReflect(c.call, refClient)
+
+
 	}
+
+		 */
 
 	if err != nil {
 		return nil, err
 	}
-
+/*
 	md := mtd.GetInputType()
 	payloadMessage := dynamic.NewMessage(md)
 	if payloadMessage == nil {
@@ -147,6 +159,8 @@ func NewRequester(c *RunConfig) (*Requester, error) {
 		reqr.metadataProvider = defaultMDProvider.getMetadataForCall
 	}
 
+ */
+
 	return reqr, nil
 }
 
@@ -156,7 +170,7 @@ func (b *Requester) Run() (*Report, error) {
 
 	defer close(b.stopCh)
 
-	cc, err := b.openClientConns()
+	_, err := b.openClientConns()
 	if err != nil {
 		return nil, err
 	}
@@ -167,10 +181,12 @@ func (b *Requester) Run() (*Report, error) {
 	b.start = start
 
 	// create a client stub for each connection
-	for n := 0; n < b.config.nConns; n++ {
+	/*for n := 0; n < b.config.nConns; n++ {
 		stub := grpcdynamic.NewStub(cc[n])
 		b.stubs = append(b.stubs, stub)
 	}
+
+	 */
 
 	b.reporter = newReporter(b.results, b.config)
 	b.lock.Unlock()
@@ -239,12 +255,12 @@ func (b *Requester) Finish() *Report {
 	return b.reporter.Finalize(r, total)
 }
 
-func (b *Requester) openClientConns() ([]*grpc.ClientConn, error) {
+func (b *Requester) openClientConns() ([]*authn.TokenRequester, error) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
-	if len(b.conns) == b.config.nConns {
-		return b.conns, nil
+	if len(b.reqs) == b.config.nConns {
+		return b.reqs, nil
 	}
 
 	for n := 0; n < b.config.nConns; n++ {
@@ -257,10 +273,10 @@ func (b *Requester) openClientConns() ([]*grpc.ClientConn, error) {
 			return nil, err
 		}
 
-		b.conns = append(b.conns, c)
+		b.reqs = append(b.reqs, c)
 	}
 
-	return b.conns, nil
+	return b.reqs, nil
 }
 
 func (b *Requester) closeClientConns() {
@@ -270,12 +286,15 @@ func (b *Requester) closeClientConns() {
 
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	if b.conns == nil {
+
+	/*if b.conns == nil {
 		return
 	}
 
-	for _, cc := range b.conns {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(time.Second*10))
+	 */
+
+	for _, req := range b.reqs {
+		/*ctx, cancel := context.WithTimeout(context.Background(), time.Duration(time.Second*10))
 		defer cancel()
 
 		shutdownCh := connectionOnState(ctx, cc, connectivity.Shutdown)
@@ -283,13 +302,15 @@ func (b *Requester) closeClientConns() {
 		_ = cc.Close()
 
 		<-shutdownCh
-	}
 
-	b.conns = nil
+		 */
+		req.CloseConn()
+	}
+	//b.conns = nil
 }
 
-func (b *Requester) newClientConn(withStatsHandler bool) (*grpc.ClientConn, error) {
-	var opts []grpc.DialOption
+func (b *Requester) newClientConn(withStatsHandler bool) (*authn.TokenRequester, error) {
+	/*var opts []grpc.DialOption
 
 	if b.config.insecure {
 		opts = append(opts, grpc.WithInsecure())
@@ -325,6 +346,8 @@ func (b *Requester) newClientConn(withStatsHandler bool) (*grpc.ClientConn, erro
 		}))
 	}
 
+	 */
+
 	if withStatsHandler {
 		sh := &statsHandler{
 			id:      len(b.handlers),
@@ -335,9 +358,9 @@ func (b *Requester) newClientConn(withStatsHandler bool) (*grpc.ClientConn, erro
 
 		b.handlers = append(b.handlers, sh)
 
-		opts = append(opts, grpc.WithStatsHandler(sh))
+		//opts = append(opts, grpc.WithStatsHandler(sh))
 	}
-
+/*
 	if b.config.hasLog {
 		b.config.log.Debugw("Creating client connection", "options", opts)
 	}
@@ -346,8 +369,21 @@ func (b *Requester) newClientConn(withStatsHandler bool) (*grpc.ClientConn, erro
 		opts = append(opts, grpc.WithBalancerName(b.config.lbStrategy))
 	}
 
+
+ */
 	// create client connection
-	return grpc.DialContext(ctx, b.config.host, opts...)
+	cfg, err := authn.NewKubernetesRequesterConfig("dev", false)
+	if err != nil {
+		print(err)
+		return nil, err
+	}
+	authnRequester, err := authn.NewKubernetesRequester(cfg)
+	if err != nil {
+		print(err)
+		return nil, err
+	}
+
+	return authnRequester, nil
 }
 
 func (b *Requester) runWorkers(wt load.WorkerTicker, p load.Pacer) error {
@@ -391,7 +427,8 @@ func (b *Requester) runWorkers(wt load.WorkerTicker, p load.Pacer) error {
 					w := Worker{
 						ticks:            ticks,
 						active:           true,
-						stub:             b.stubs[n],
+						//stub:             b.stubs[n],
+						req:              b.reqs[n],
 						mtd:              b.mtd,
 						config:           b.config,
 						stopCh:           make(chan bool),
@@ -400,6 +437,7 @@ func (b *Requester) runWorkers(wt load.WorkerTicker, p load.Pacer) error {
 						metadataProvider: b.metadataProvider,
 						streamRecv:       b.config.recvMsgFunc,
 						msgProvider:      b.config.dataStreamFunc,
+						handler:		  b.handlers[n],
 					}
 
 					wc++ // increment worker id

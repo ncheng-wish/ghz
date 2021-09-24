@@ -2,20 +2,21 @@ package runner
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"io"
+	//"errors"
+	//"fmt"
+	//"io"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
+	//"github.com/gogo/protobuf/proto"
 	"github.com/jhump/protoreflect/desc"
-	"github.com/jhump/protoreflect/dynamic"
-	"github.com/jhump/protoreflect/dynamic/grpcdynamic"
+	//"github.com/jhump/protoreflect/dynamic"
+	//"github.com/jhump/protoreflect/dynamic/grpcdynamic"
 	"go.uber.org/multierr"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/encoding/gzip"
-	"google.golang.org/grpc/metadata"
+	//"google.golang.org/grpc"
+	//"google.golang.org/grpc/encoding/gzip"
+	//"google.golang.org/grpc/metadata"
+	"github.com/ContextLogic/authn/pkg/authn"
 )
 
 // TickValue is the tick value
@@ -26,9 +27,9 @@ type TickValue struct {
 
 // Worker is used for doing a single stream of requests in parallel
 type Worker struct {
-	stub grpcdynamic.Stub
+	//stub grpcdynamic.Stub
 	mtd  *desc.MethodDescriptor
-
+	req      *authn.TokenRequester
 	config   *RunConfig
 	workerID string
 	active   bool
@@ -40,6 +41,7 @@ type Worker struct {
 	msgProvider      StreamMessageProviderFunc
 
 	streamRecv StreamRecvMsgInterceptFunc
+	handler    *statsHandler
 }
 
 func (w *Worker) runWorker() error {
@@ -78,18 +80,37 @@ func (w *Worker) Stop() {
 }
 
 func (w *Worker) makeRequest(tv TickValue) error {
-	reqNum := int64(tv.reqNumber)
+	//reqNum := tv.reqNumber
+	//ctd := newCallData(w.mtd, w.config.funcs, w.workerID, reqNum)
+	/*
+		reqMD, err := w.metadataProvider(ctd)
+		if err != nil {
+			return err
+		}
+		if w.config.enableCompression {
+			reqMD.Append("grpc-accept-encoding", gzip.Name)
+		}
 
-	ctd := newCallData(w.mtd, w.config.funcs, w.workerID, reqNum)
+	*/
+	start := time.Now()
+		_, err := w.req.GetToken(context.Background())
+		if err != nil {
+			return err
+		}
+		dur := time.Since(start)
 
-	reqMD, err := w.metadataProvider(ctd)
-	if err != nil {
-		return err
-	}
+		//print(dur)
 
-	if w.config.enableCompression {
-		reqMD.Append("grpc-accept-encoding", gzip.Name)
-	}
+		res := &callResult{
+			err: nil,
+			status: "OK",
+			duration:  dur,
+			timestamp: time.Now(),
+		}
+		w.handler.results <- res
+
+
+/*
 
 	ctx := context.Background()
 	var cancel context.CancelFunc
@@ -163,9 +184,11 @@ func (w *Worker) makeRequest(tv TickValue) error {
 		_ = w.makeUnaryRequest(&ctx, reqMD, inputs[0])
 	}
 
-	return err
-}
+ */
 
+	return nil
+}
+/*
 func (w *Worker) makeUnaryRequest(ctx *context.Context, reqMD *metadata.MD, input *dynamic.Message) error {
 	var res proto.Message
 	var resErr error
@@ -599,3 +622,5 @@ func (w *Worker) makeBidiRequest(ctx *context.Context,
 
 	return err
 }
+
+ */
